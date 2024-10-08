@@ -128,11 +128,15 @@ struct AWSLambdaPackager: CommandPlugin {
                 // when developing locally, we must have the full swift-aws-lambda-runtime project in the container
                 // because Examples' Package.swift have a dependency on ../..
                 // just like Package.swift's examples assume ../.., we assume we are two levels below the root project
-                let lastComponent = packageDirectory.lastComponent
-                let beforeLastComponent = packageDirectory.removingLastComponent().lastComponent
+                let packageDirectoryURL = URL(string: packageDirectory.string)!
+                let slice = packageDirectoryURL.pathComponents.suffix(2)
                 try self.execute(
                     executable: dockerToolPath,
-                    arguments: ["run", "--rm", "--env", "LAMBDA_USE_LOCAL_DEPS=true", "-v", "\(packageDirectory.string)/../..:/workspace", "-w", "/workspace/\(beforeLastComponent)/\(lastComponent)", baseImage, "bash", "-cl", buildCommand],
+                    arguments: [
+                        "run", "--rm", "--env", "LAMBDA_USE_LOCAL_DEPS=true", "-v",
+                        "\(packageDirectory)../..:/workspace", "-w",
+                        "/workspace/\(slice.joined(separator: "/"))", baseImage, "bash", "-cl", buildCommand,
+                    ],
                     logLevel: verboseLogging ? .debug : .output
                 )
             } else {
@@ -226,13 +230,27 @@ struct AWSLambdaPackager: CommandPlugin {
             #endif
 
             // add resources
-            let artifactDirectory = artifactPath.removingLastComponent()
-            let resourcesDirectoryName = "\(packageName)_\(product.name).resources"
-            let resourcesDirectory = artifactDirectory.appending(resourcesDirectoryName)
-            let relocatedResourcesDirectory = workingDirectory.appending(resourcesDirectoryName)
-            if FileManager.default.fileExists(atPath: resourcesDirectory.string) {
-                try FileManager.default.copyItem(atPath: resourcesDirectory.string, toPath: relocatedResourcesDirectory.string)
-                arguments.append(resourcesDirectoryName)
+            var artifactPathComponents = URL(string: artifactPath.string)!.pathComponents
+            _ = artifactPathComponents.removeFirst()  // Get rid of beginning "/"
+            _ = artifactPathComponents.removeLast()  // Get rid of the name of the package
+            let artifactDirectory = "/\(artifactPathComponents.joined(separator: "/"))"
+            for fileInArtifactDirectory in try FileManager.default.contentsOfDirectory(atPath: artifactDirectory) {
+                guard let artifactURL = URL(string: "\(artifactDirectory)/\(fileInArtifactDirectory)") else {
+                    continue
+                }
+
+                guard artifactURL.pathExtension == "resources" else {
+                    continue  // Not resources, so don't copy
+                }
+                let resourcesDirectoryName = artifactURL.lastPathComponent
+                let relocatedResourcesDirectory = workingDirectory.appending(resourcesDirectoryName)
+                if FileManager.default.fileExists(atPath: artifactURL.path()) {
+                    try FileManager.default.copyItem(
+                        atPath: artifactURL.path(),
+                        toPath: relocatedResourcesDirectory.string
+                    )
+                    arguments.append(resourcesDirectoryName)
+                }
             }
 
             // run the zip tool

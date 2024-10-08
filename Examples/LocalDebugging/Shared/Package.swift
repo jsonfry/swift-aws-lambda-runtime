@@ -11,6 +11,12 @@ let package = Package(
     dependencies: [
     ],
     targets: [
-        .target(name: "Shared", dependencies: []),
+        .target(
+            name: "Shared",
+            dependencies: [],
+            resources: [
+                .process("Resources")
+            ]
+        )
     ]
 )
